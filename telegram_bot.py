@@ -92,18 +92,19 @@ def answer_general_question(text: str) -> str:
 
     # 2. Optional Gemini API call if key configured
     if Config.GEMINI_API_KEY:
-        try:
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={Config.GEMINI_API_KEY}",
-                json={
-                    "contents": [{"parts": [{"text": cleaned}]}]
-                },
-                timeout=10
-            ).json()
-            if "candidates" in resp and resp["candidates"]:
-                return resp["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception as e:
-            logger.warning(f"Gemini API call error: {e}")
+        for model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
+            try:
+                resp = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={Config.GEMINI_API_KEY}",
+                    json={
+                        "contents": [{"parts": [{"text": cleaned}]}]
+                    },
+                    timeout=10
+                ).json()
+                if "candidates" in resp and resp["candidates"]:
+                    return resp["candidates"][0]["content"]["parts"][0]["text"]
+            except Exception as e:
+                logger.warning(f"Gemini API call error ({model}): {e}")
 
     # 3. Built-in Knowledge Base Engine
     capitals = {
