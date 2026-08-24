@@ -1,6 +1,8 @@
 import re
 import logging
 import asyncio
+import datetime
+import requests
 from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -22,6 +24,141 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 engine = OrderEngine()
+
+def detect_price_query(text: str) -> Optional[str]:
+    coin_map = {
+        "비트코인": "BTC-USDT", "비트": "BTC-USDT", "BTC": "BTC-USDT", "BITCOIN": "BTC-USDT",
+        "이더리움": "ETH-USDT", "이더": "ETH-USDT", "ETH": "ETH-USDT", "ETHEREUM": "ETH-USDT",
+        "솔라나": "SOL-USDT", "솔": "SOL-USDT", "SOL": "SOL-USDT", "SOLANA": "SOL-USDT",
+        "리플": "XRP-USDT", "XRP": "XRP-USDT", "RIPPLE": "XRP-USDT",
+        "도지": "DOGE-USDT", "DOGE": "DOGE-USDT", "DOGECOIN": "DOGE-USDT",
+        "에이다": "ADA-USDT", "ADA": "ADA-USDT",
+        "수이": "SUI-USDT", "SUI": "SUI-USDT",
+        "아발란체": "AVAX-USDT", "AVAX": "AVAX-USDT",
+        "체인링크": "LINK-USDT", "LINK": "LINK-USDT",
+        "앱토스": "APT-USDT", "APT": "APT-USDT",
+    }
+    keywords = ["얼마", "시세", "가격", "usdt", "USDT", "price", "몇"]
+    if any(kw in text.lower() for kw in keywords):
+        for name, sym in coin_map.items():
+            if re.search(r'\b' + re.escape(name) + r'\b', text, re.IGNORECASE) or name.lower() in text.lower():
+                return sym
+    return None
+
+def format_ticker_response(symbol: str, ticker_data: dict) -> str:
+    if ticker_data.get("code") == 0 and "data" in ticker_data:
+        data = ticker_data["data"]
+        last_price = float(data.get("lastPrice", 0))
+        change_pct = float(data.get("priceChangePercent", 0))
+        high_p = float(data.get("highPrice", 0))
+        low_p = float(data.get("lowPrice", 0))
+        
+        coin_name = symbol.split("-")[0]
+        emoji = "🟢" if change_pct >= 0 else "🔴"
+        sign = "+" if change_pct >= 0 else ""
+        
+        return (
+            f"💎 **{symbol} 실시간 시세 (BingX)**\n\n"
+            f"• **현재가**: **{last_price:,.2f} USDT** (1 {coin_name} ≈ `{last_price:,.2f}` USDT)\n"
+            f"• **24시간 변동률**: {sign}{change_pct:.2f}% {emoji}\n"
+            f"• **24시간 고가**: {high_p:,.2f} USDT\n"
+            f"• **24시간 저가**: {low_p:,.2f} USDT"
+        )
+    return f"⚠️ {symbol} 시세 정보를 조회할 수 없습니다."
+
+def answer_general_question(text: str) -> str:
+    cleaned = text.strip()
+
+    # 1. Optional OpenAI API call if key configured
+    if Config.OPENAI_API_KEY:
+        try:
+            resp = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {Config.OPENAI_API_KEY}"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": "You are a friendly Telegram AI assistant. Answer concisely and accurately in Korean with appropriate emojis."},
+                        {"role": "user", "content": cleaned}
+                    ],
+                    "max_tokens": 500
+                },
+                timeout=10
+            ).json()
+            if "choices" in resp and resp["choices"]:
+                return resp["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.warning(f"OpenAI API call error: {e}")
+
+    # 2. Optional Gemini API call if key configured
+    if Config.GEMINI_API_KEY:
+        try:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={Config.GEMINI_API_KEY}",
+                json={
+                    "contents": [{"parts": [{"text": cleaned}]}]
+                },
+                timeout=10
+            ).json()
+            if "candidates" in resp and resp["candidates"]:
+                return resp["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            logger.warning(f"Gemini API call error: {e}")
+
+    # 3. Built-in Knowledge Base Engine
+    capitals = {
+        "대한민국": "서울(Seoul) 🇰🇷",
+        "한국": "서울(Seoul) 🇰🇷",
+        "미국": "워싱턴 D.C.(Washington, D.C.) 🇺🇸",
+        "일본": "도쿄(Tokyo) 🇯🇵",
+        "중국": "베이징(Beijing) 🇨🇳",
+        "영국": "런던(London) 🇬🇧",
+        "프랑스": "파리(Paris) 🇫🇷",
+        "독일": "베를린(Berlin) 🇩🇪",
+        "베트남": "하노이(Hanoi) 🇻🇳",
+        "캐나다": "오타와(Ottawa) 🇨🇦",
+        "호주": "캔버라(Canberra) 🇦🇺",
+        "이탈리아": "로마(Rome) 🇮🇹",
+        "스페인": "마드리드(Madrid) 🇪🇸",
+    }
+    if "수도" in cleaned:
+        for country, cap in capitals.items():
+            if country in cleaned:
+                return f"📍 **{country}의 수도는 '{cap}'입니다.**"
+        return "🗺️ **수도 질문 안내**: '대한민국 수도', '미국 수도' 처럼 국가명을 포함하여 물어보시면 수도를 알려드립니다!"
+
+    # Greetings
+    if re.search(r'안녕|반가|하이|hello|hi\b', cleaned, re.IGNORECASE):
+        return "👋 **안녕하세요!** BingX 선물 자동 매매 & 시세/대화 도우미 봇입니다. 무엇을 도와드릴까요?"
+
+    # Bot Identity
+    if re.search(r'누구|이름|너는', cleaned, re.IGNORECASE):
+        return "🤖 저는 **BingX 자동 매매 & 실시간 코인 시세 / 대화 도우미 봇**입니다!"
+
+    # Math Calculations
+    math_match = re.match(r'^\s*(\d+(?:\.\d+)?)\s*([\+\-\*/])\s*(\d+(?:\.\d+)?)\s*$', cleaned)
+    if math_match:
+        n1 = float(math_match.group(1))
+        op = math_match.group(2)
+        n2 = float(math_match.group(3))
+        res = n1 + n2 if op == '+' else (n1 - n2 if op == '-' else (n1 * n2 if op == '*' else (n1 / n2 if n2 != 0 else '0 나누기 불가')))
+        return f"🔢 **계산 결과**: `{n1} {op} {n2} = {res}`"
+
+    # Date / Time
+    if any(kw in cleaned for kw in ["몇 시", "몇시", "오늘 날짜", "현재 시간"]):
+        now_str = datetime.datetime.now().strftime("%Y년 %m월 %d일 %H시 %M분 %S초")
+        return f"⏰ **현재 시간**: `{now_str}`"
+
+    # Default Fallback
+    return (
+        f"💬 **대화 및 사용 안내**:\n"
+        f"입력해주신 내용: *\"{cleaned}\"*\n\n"
+        f"💡 **이런 질문과 명령을 해보세요**:\n"
+        f"• **실시간 시세 조회**: `1ETH가 몇 USDT?`, `비트코인 얼마?`, `솔라나 시세`\n"
+        f"• **지식 & 대화**: `대한민국의 수도는?`, `지금 몇 시야?`, `123 + 456`\n"
+        f"• **매매 시그널 전송**: `비트코인 롱 10배 1차매수...` 시그널 전송 시 분할 지정가 매매 카드가 생성됩니다.\n\n"
+        f"*(💡 `.env` 파일에 `OPENAI_API_KEY` 또는 `GEMINI_API_KEY`를 설정하시면 AI의 무제한 지식 대화 기능도 활용하실 수 있습니다!)*"
+    )
 
 # Store pending signals per user_id: {user_id: TradeSignal}
 pending_signals: Dict[int, TradeSignal] = {}
@@ -279,28 +416,36 @@ async def handle_signal_message(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             logger.warning(f"Failed to edit pending card: {e}")
 
-    if len(clean_text) < 5:
+    # 3. Check for Crypto Price / Ticker Inquiry (e.g. "1ETH가 몇 USDT", "비트코인 얼마", "ETH 시세")
+    sym = detect_price_query(clean_text)
+    if sym and not any(kw in clean_text for kw in ["매수", "매도", "진입", "손절", "익절", "비중", "1차", "2차"]):
+        ticker_res = engine.client.get_ticker(sym)
+        reply = format_ticker_response(sym, ticker_res)
+        await update.message.reply_text(reply, parse_mode="Markdown")
         return
 
-    try:
-        # 3. Parse Signal
-        signal = parse_signal_text(clean_text)
-        
-        if not signal.entries:
-            await update.message.reply_text("⚠️ 메세지에서 매수 가격 범위(1차매수 등)를 찾을 수 없습니다.")
-            return
+    # 4. Check for Trading Signal
+    is_signal = any(kw in clean_text for kw in ["차매수", "차진입", "1차", "2차", "진입가", "비중"]) or (
+        ("롱" in clean_text or "숏" in clean_text or "LONG" in clean_text or "SHORT" in clean_text) and ("~" in clean_text or "K" in clean_text)
+    )
 
-        # Store pending signal for this user
-        pending_signals[user_id] = signal
-        pending_signal_amounts[user_id] = signal.total_amount
+    if is_signal:
+        try:
+            signal = parse_signal_text(clean_text)
+            if signal.entries:
+                pending_signals[user_id] = signal
+                pending_signal_amounts[user_id] = signal.total_amount
 
-        preview_msg, reply_markup = render_preview_card(signal, user_id)
-        sent_msg = await update.message.reply_text(preview_msg, reply_markup=reply_markup, parse_mode="Markdown")
-        pending_message_ids[user_id] = sent_msg.message_id
+                preview_msg, reply_markup = render_preview_card(signal, user_id)
+                sent_msg = await update.message.reply_text(preview_msg, reply_markup=reply_markup, parse_mode="Markdown")
+                pending_message_ids[user_id] = sent_msg.message_id
+                return
+        except Exception as e:
+            logger.exception("Failed to process signal preview")
 
-    except Exception as e:
-        logger.exception("Failed to process signal preview")
-        await update.message.reply_text(f"❌ 시그널 처리 중 오류가 발생했습니다:\n`{e}`", parse_mode="Markdown")
+    # 5. General Conversation / Knowledge QA
+    reply = answer_general_question(clean_text)
+    await update.message.reply_text(reply, parse_mode="Markdown")
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

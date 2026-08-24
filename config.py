@@ -14,6 +14,9 @@ class Config:
         int(uid.strip()) for uid in _allowed_users_str.split(",") if uid.strip().isdigit()
     ]
     
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    
     DEFAULT_SPLIT_COUNT = int(os.getenv("DEFAULT_SPLIT_COUNT", "10"))
     DEFAULT_MARGIN_TYPE = os.getenv("DEFAULT_MARGIN_TYPE", "ISOLATED").upper()
 

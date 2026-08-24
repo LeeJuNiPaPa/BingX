@@ -186,3 +186,18 @@ class BingXClient:
                         "minQuantity": float(c.get("tradeMinQuantity", defaults["minQuantity"]))
                     }
         return defaults
+
+    def get_ticker(self, symbol: str) -> Dict[str, Any]:
+        """Fetch real-time ticker data for symbol (e.g. BTC-USDT)."""
+        if not self.is_configured:
+            return {
+                "code": 0,
+                "data": {
+                    "symbol": symbol,
+                    "lastPrice": "78900.0" if "BTC" in symbol else "2480.0",
+                    "priceChangePercent": "1.5",
+                    "highPrice": "79500.0",
+                    "lowPrice": "77000.0"
+                }
+            }
+        return self._request("GET", "/openApi/swap/v2/quote/ticker", {"symbol": symbol})
