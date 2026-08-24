@@ -45,24 +45,29 @@ class OrderEngine:
         is_mock = bal_info.get("is_mock", True)
 
         # Base margin calculation
-        if signal.total_amount:
-            base_margin = signal.total_amount
-        elif custom_total_amount is not None:
+        if custom_total_amount is not None:
             base_margin = custom_total_amount
+        elif signal.total_amount:
+            base_margin = signal.total_amount
         elif current_config.get("total_trade_amount") is not None:
             base_margin = current_config["total_trade_amount"]
         else:
             base_margin = available_margin
 
-        if not is_mock and base_margin > available_margin:
+        if base_margin > available_margin:
             base_margin = available_margin
 
         errors = []
         step_summaries = []
 
         # 2. Set Margin Type & Leverage
-        self.client.set_margin_type(signal.symbol, margin_type)
-        self.client.set_leverage(signal.symbol, signal.leverage, signal.position_side)
+        res_m = self.client.set_margin_type(signal.symbol, margin_type)
+        if res_m.get("code") != 0 and not is_mock:
+            errors.append(f"마진 모드 설정 실패: {res_m.get('msg')}")
+
+        res_l = self.client.set_leverage(signal.symbol, signal.leverage, signal.position_side)
+        if res_l.get("code") != 0 and not is_mock:
+            errors.append(f"레버리지 설정 실패: {res_l.get('msg')}")
 
         # 3. Contract Precision Info
         contract_info = self.client.get_contract_info(signal.symbol)
@@ -95,6 +100,10 @@ class OrderEngine:
                     take_profit=signal.take_profit,
                     stop_loss=signal.stop_loss
                 )
+                if resp.get("code") != 0 and not is_mock:
+                    err_msg = f"{entry.step}차 매수 지정가 주문 실패 ({price} USDT): [{resp.get('code')}] {resp.get('msg')}"
+                    logger.error(err_msg)
+                    errors.append(err_msg)
                 
                 sub_orders.append({
                     "price": price,
@@ -125,6 +134,10 @@ class OrderEngine:
                         take_profit=signal.take_profit if i == n - 1 else None,  # Attach TP/SL to last order or overall
                         stop_loss=signal.stop_loss if i == 0 else None
                     )
+                    if resp.get("code") != 0 and not is_mock:
+                        err_msg = f"{entry.step}차 {i+1}번 분할 주문 실패 ({price} USDT): [{resp.get('code')}] {resp.get('msg')}"
+                        logger.error(err_msg)
+                        errors.append(err_msg)
                     
                     sub_orders.append({
                         "grid_index": i + 1,

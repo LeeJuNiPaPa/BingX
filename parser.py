@@ -156,16 +156,18 @@ def parse_signal_text(text: str) -> TradeSignal:
 
     # 6. Total Trade Amount (USDT)
     total_amount = None
-    # Catch explicit unit patterns: e.g. "500u", "500usdt", "500$", "500달러", "총금액 500", "금액 500"
-    amt_match = re.search(r'(?:총\s*금액|총\s*투자금?|총\s*증거금|금액|증거금)?\s*[:=]?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:USDT|usdt|u|U|\$|달러)', full_text)
+    # Filter out entry tier lines to prevent matching price ranges like "50000~50100 USDT"
+    non_entry_lines = [line for line in lines if not re.search(r'\d+차|[\~～]', line)]
+    non_entry_text = " ".join(non_entry_lines)
+
+    amt_match = re.search(r'(?:총\s*금액|총\s*투자금?|총\s*증거금|금액|증거금)\s*[:=]?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:USDT|usdt|u|U|\$|달러)?', non_entry_text, re.IGNORECASE)
     if not amt_match:
-        amt_match = re.search(r'(?:총\s*금액|총\s*투자금?|총\s*증거금|금액)\s*[:=]?\s*(\d+(?:,\d+)*(?:\.\d+)?)', full_text, re.IGNORECASE)
+        amt_match = re.search(r'\b(\d+(?:\.\d+)?)\s*(?:USDT|usdt|u|U|\$|달러)\b', non_entry_text, re.IGNORECASE)
 
     if amt_match:
         try:
             val = float(amt_match.group(1).replace(",", ""))
-            # Ensure extracted value is a plausible USDT margin amount, not leverage (e.g., > 0)
-            if val > 0:
+            if val > 0 and val < 1000000:
                 total_amount = val
         except Exception:
             pass

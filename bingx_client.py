@@ -1,6 +1,7 @@
 import time
 import hmac
 import hashlib
+import json
 import requests
 import logging
 from typing import Dict, Any, Optional, List
@@ -31,25 +32,31 @@ class BingXClient:
             logger.warning("BingX API key/secret not configured. Running in mock/simulation mode.")
             return {"code": 0, "msg": "Simulation mode (API key missing)", "data": {}}
 
-        url = f"{self.base_url}{path}"
         if params is None:
             params = {}
 
         params["timestamp"] = int(time.time() * 1000)
-        params["signature"] = self._sign(params)
+        sorted_params = sorted(params.items(), key=lambda x: x[0])
+        query_string = "&".join([f"{k}={v}" for k, v in sorted_params])
+        signature = hmac.new(
+            self.secret_key.encode("utf-8"),
+            query_string.encode("utf-8"),
+            hashlib.sha256
+        ).hexdigest()
+
+        full_url = f"{self.base_url}{path}?{query_string}&signature={signature}"
 
         headers = {
-            "X-BX-APIKEY": self.api_key,
-            "Content-Type": "application/x-www-form-urlencoded"
+            "X-BX-APIKEY": self.api_key
         }
 
         try:
             if method.upper() == "GET":
-                resp = requests.get(url, headers=headers, params=params, timeout=10)
+                resp = requests.get(full_url, headers=headers, timeout=10)
             elif method.upper() == "POST":
-                resp = requests.post(url, headers=headers, params=params, timeout=10)
+                resp = requests.post(full_url, headers=headers, timeout=10)
             elif method.upper() == "DELETE":
-                resp = requests.delete(url, headers=headers, params=params, timeout=10)
+                resp = requests.delete(full_url, headers=headers, timeout=10)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
@@ -140,9 +147,19 @@ class BingXClient:
         }
 
         if take_profit:
-            params["takeProfit"] = str(take_profit)
+            params["takeProfit"] = json.dumps({
+                "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": float(take_profit),
+                "price": float(take_profit),
+                "workingType": "MARK_PRICE"
+            })
         if stop_loss:
-            params["stopLoss"] = str(stop_loss)
+            params["stopLoss"] = json.dumps({
+                "type": "STOP_MARKET",
+                "stopPrice": float(stop_loss),
+                "price": float(stop_loss),
+                "workingType": "MARK_PRICE"
+            })
 
         return self._request("POST", "/openApi/swap/v2/trade/order", params)
 
