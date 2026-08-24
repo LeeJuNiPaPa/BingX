@@ -131,7 +131,7 @@ def render_preview_card(signal: TradeSignal, user_id: int):
         tier_details.append(
             f"  ▶ **{entry.step}차 매수** (비중 {entry.portion_pct:.0f}% | 증거금 `{tier_margin:,.2f}` USDT)\n"
             f"     - 범위: `{p_range}` USDT ({split_cnt}분할)\n"
-            f"     - 1건당 가격/수량: ~`{sub_qty}` {signal.symbol.split('-')[0]}"
+            f"     - 1건당 가격/수량: ~`{sub_pos:,.2f}` USDT"
         )
 
     tp_str = f"`{signal.take_profit:,.{price_prec}f}` USDT" if signal.take_profit else "대기"
@@ -149,7 +149,7 @@ def render_preview_card(signal: TradeSignal, user_id: int):
         + "\n".join(tier_details) + "\n\n"
         f"• **익절가**: {tp_str} | **손절가**: {sl_str}\n\n"
         f"❓ **위 매매 내역으로 BingX에 실제 주문을 전송하시겠습니까?**\n"
-        f"*(금액 변경 시 `500` 또는 `500u` 처럼 숫자를 바로 입력하시면 이 카드가 업데이트됩니다)*"
+        f"*(금액 변경 시 USDT를 입력하시면 됩니다.)*"
     )
 
     keyboard = [
