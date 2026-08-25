@@ -68,6 +68,7 @@ def format_ticker_response(symbol: str, ticker_data: dict) -> str:
 
 def answer_general_question(text: str) -> str:
     cleaned = text.strip()
+    persona_text = current_config.get("ai_persona") or Config.AI_PERSONA
 
     # 1. Optional OpenAI API call if key configured
     if Config.OPENAI_API_KEY:
@@ -78,31 +79,33 @@ def answer_general_question(text: str) -> str:
                 json={
                     "model": "gpt-4o-mini",
                     "messages": [
-                        {"role": "system", "content": "You are a friendly Telegram AI assistant. Answer concisely and accurately in Korean with appropriate emojis."},
+                        {"role": "system", "content": persona_text},
                         {"role": "user", "content": cleaned}
                     ],
-                    "max_tokens": 500
+                    "max_tokens": 600
                 },
-                timeout=10
+                timeout=15
             ).json()
             if "choices" in resp and resp["choices"]:
                 return resp["choices"][0]["message"]["content"]
         except Exception as e:
             logger.warning(f"OpenAI API call error: {e}")
 
-    # 2. Optional Gemini API call with automatic model failover (Quota/429/404 handling)
+    # 2. Optional Gemini API call with automatic model failover & Persona
     if Config.GEMINI_API_KEY:
         models = current_config.get("gemini_models") or Config.GEMINI_MODELS
         for model in models:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={Config.GEMINI_API_KEY}"
-                resp = requests.post(
-                    url,
-                    json={
-                        "contents": [{"parts": [{"text": cleaned}]}]
+                payload = {
+                    "system_instruction": {
+                        "parts": [{"text": persona_text}]
                     },
-                    timeout=10
-                ).json()
+                    "contents": [
+                        {"parts": [{"text": cleaned}]}
+                    ]
+                }
+                resp = requests.post(url, json=payload, timeout=20).json()
                 if "candidates" in resp and resp["candidates"]:
                     return resp["candidates"][0]["content"]["parts"][0]["text"]
                 
@@ -615,6 +618,36 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def persona_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not check_authorized(update.effective_user.id):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    args = context.args
+    if args:
+        raw = " ".join(args).strip()
+        if raw.lower() == "reset":
+            current_config["ai_persona"] = Config.AI_PERSONA
+            await update.message.reply_text("✅ AI 성격(Persona)이 기본 '불알친구' 모드로 리셋되었습니다! 👬", parse_mode="Markdown")
+            return
+        else:
+            current_config["ai_persona"] = raw
+            await update.message.reply_text(f"✅ AI 성격(Persona)이 새로 설정되었습니다:\n*\"{raw}\"*", parse_mode="Markdown")
+            return
+
+    current_p = current_config.get("ai_persona") or Config.AI_PERSONA
+    msg = (
+        f"👬 **AI 페르소나 (성격) 설정 안내**\n\n"
+        f"📌 **현재 설정된 AI 성격**:\n"
+        f"*\"{current_p}\"*\n\n"
+        f"💡 **성격 변경 방법**:\n"
+        f"• `/persona [원하는 성격 설명]` 입력하여 AI 성격을 자유롭게 변경할 수 있습니다.\n"
+        f"  *(예: `/persona 너는 상냥하고 똑똑한 비서야. 칭찬을 자주 해줘.`)*\n"
+        f"• `/persona reset` 입력 시 기본 '불알친구' 성격 모드로 복원됩니다.\n"
+        f"• `.env` 파일의 `AI_PERSONA` 항목에서도 영구 설정 가능합니다."
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 def main():
     import sys
     if hasattr(sys.stdout, 'reconfigure'):
@@ -637,6 +670,7 @@ def main():
     app.add_handler(CommandHandler(["config", "con"], config_command))
     app.add_handler(CommandHandler(["balance", "bal"], balance_command))
     app.add_handler(CommandHandler(["model", "gemini"], model_command))
+    app.add_handler(CommandHandler(["persona", "friend"], persona_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_signal_message))
     app.add_handler(CallbackQueryHandler(button_callback_handler))
 
