@@ -90,12 +90,14 @@ def answer_general_question(text: str) -> str:
         except Exception as e:
             logger.warning(f"OpenAI API call error: {e}")
 
-    # 2. Optional Gemini API call if key configured
+    # 2. Optional Gemini API call with automatic model failover (Quota/429/404 handling)
     if Config.GEMINI_API_KEY:
-        for model in ["gemini-3.6-flash", "gemini-2.5-flash"]:
+        models = current_config.get("gemini_models") or Config.GEMINI_MODELS
+        for model in models:
             try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={Config.GEMINI_API_KEY}"
                 resp = requests.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={Config.GEMINI_API_KEY}",
+                    url,
                     json={
                         "contents": [{"parts": [{"text": cleaned}]}]
                     },
@@ -103,6 +105,12 @@ def answer_general_question(text: str) -> str:
                 ).json()
                 if "candidates" in resp and resp["candidates"]:
                     return resp["candidates"][0]["content"]["parts"][0]["text"]
+                
+                err = resp.get("error", {})
+                err_code = err.get("code")
+                err_status = err.get("status", "")
+                err_msg = err.get("message", "")
+                logger.warning(f"⚠️ Gemini model '{model}' error (Code {err_code} / {err_status}): {err_msg[:80]}... Auto switching to next fallback model.")
             except Exception as e:
                 logger.warning(f"Gemini API call error ({model}): {e}")
 
@@ -580,6 +588,33 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         await query.edit_message_text("\n".join(report_lines), parse_mode="Markdown")
 
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not check_authorized(update.effective_user.id):
+        await update.message.reply_text("⛔ 접근 권한이 없습니다.")
+        return
+
+    args = context.args
+    if args:
+        raw = " ".join(args)
+        new_models = [m.strip() for m in raw.replace(" ", "").split(",") if m.strip()]
+        if new_models:
+            current_config["gemini_models"] = new_models
+            models_str = ", ".join([f"`{m}`" for m in new_models])
+            await update.message.reply_text(f"✅ Gemini AI 모델 순서가 변경되었습니다:\n{models_str}", parse_mode="Markdown")
+            return
+
+    models = current_config.get("gemini_models") or Config.GEMINI_MODELS
+    models_str = "\n".join([f"  {i+1}. `{m}`" for i, m in enumerate(models)])
+    msg = (
+        f"🤖 **Gemini AI 모델 설정 & 무료 사용량 자동 전환 안내**\n\n"
+        f"📋 **현재 설정된 모델 순서 (429/무료 한도 초과 시 순서대로 자동 전환)**:\n"
+        f"{models_str}\n\n"
+        f"💡 **모델 순서 동적 변경 방법**:\n"
+        f"• `/model gemini-3.6-flash,gemini-2.5-flash,gemini-1.5-flash` 처럼 원하시는 모델 순서를 콤마로 구분하여 입력하세요.\n"
+        f"• `.env` 파일의 `GEMINI_MODELS` 설정에서도 영구 변경이 가능합니다."
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 def main():
     import sys
     if hasattr(sys.stdout, 'reconfigure'):
@@ -601,6 +636,7 @@ def main():
     app.add_handler(CommandHandler(["l", "L"], l_command))
     app.add_handler(CommandHandler(["config", "con"], config_command))
     app.add_handler(CommandHandler(["balance", "bal"], balance_command))
+    app.add_handler(CommandHandler(["model", "gemini"], model_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_signal_message))
     app.add_handler(CallbackQueryHandler(button_callback_handler))
 
